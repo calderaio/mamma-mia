@@ -7,7 +7,15 @@ type SeatKind = 'human' | 'bot' | 'learning';
 const SEAT_CYCLE: SeatKind[] = ['human', 'bot', 'learning'];
 const SEAT_LABEL: Record<SeatKind, string> = { human: '🙂 Mensch', bot: '🤖 Bot', learning: '🎓 Lernender Bot' };
 
-export function SetupScreen({ onStart, qTableStats }: { onStart: (players: PlayerSetup[]) => void; qTableStats: QTableStats }) {
+export function SetupScreen({
+  onStart,
+  qTableStats,
+  onTrainMore,
+}: {
+  onStart: (players: PlayerSetup[]) => void;
+  qTableStats: QTableStats;
+  onTrainMore: (games: number) => void;
+}) {
   const [count, setCount] = useState(3);
   const [names, setNames] = useState<string[]>(['Spieler 1', 'Spieler 2', 'Spieler 3', 'Spieler 4', 'Spieler 5']);
   const [seats, setSeats] = useState<SeatKind[]>(['human', 'human', 'human', 'human', 'human']);
@@ -67,15 +75,26 @@ export function SetupScreen({ onStart, qTableStats }: { onStart: (players: Playe
         ))}
       </div>
 
-      {hasLearningSeat && (
-        <p className="text-xs opacity-60">
+      <div className="pizzeria-panel flex flex-col gap-2 p-3 text-xs">
+        <p className="opacity-75">
           🎓 Der Lernende Bot merkt sich Ergebnisse über Spiele hinweg (im Browser gespeichert) und wird dadurch
-          langsam besser.
+          langsam besser.{' '}
           {qTableStats.visits > 0
-            ? ` Bisher gelernt aus ${qTableStats.visits} Entscheidungen (${qTableStats.size} bekannte Situationen).`
-            : ' Vor dem ersten Spiel wird er kurz per Selbstspiel trainiert.'}
+            ? `Bisher gelernt aus ${qTableStats.visits.toLocaleString('de-DE')} Entscheidungen (${qTableStats.size} bekannte Situationen).`
+            : 'Noch ungetrainiert.'}
         </p>
-      )}
+        <div className="flex flex-wrap justify-center gap-2">
+          <button type="button" onClick={() => onTrainMore(5000)} className="btn-secondary px-3 py-1.5 text-xs">
+            +5.000 Spiele trainieren
+          </button>
+          <button type="button" onClick={() => onTrainMore(20000)} className="btn-secondary px-3 py-1.5 text-xs">
+            +20.000 Spiele trainieren
+          </button>
+        </div>
+        {!hasLearningSeat && (
+          <p className="opacity-50">Tipp: Wähle unten mindestens einen 🎓 Lernenden Bot, um gegen ihn zu spielen.</p>
+        )}
+      </div>
 
       <button
         type="button"

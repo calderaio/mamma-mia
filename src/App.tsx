@@ -8,14 +8,14 @@ import { RoundEndScreen } from './components/RoundEndScreen';
 import { GameEndScreen } from './components/GameEndScreen';
 
 function App() {
-  const { state, error, start, actions, botStep, qTableStats, warmupProgress } = useGame();
+  const { state, error, start, actions, botStep, qTableStats, warmupProgress, trainMore } = useGame();
 
   if (warmupProgress) {
     return <WarmupScreen progress={warmupProgress} />;
   }
 
   if (!state) {
-    return <SetupScreen onStart={start} qTableStats={qTableStats} />;
+    return <SetupScreen onStart={start} qTableStats={qTableStats} onTrainMore={trainMore} />;
   }
 
   // Whenever it's a bot's turn to act, show what it would do and require a

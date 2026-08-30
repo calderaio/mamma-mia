@@ -111,31 +111,13 @@ export function useGame() {
     // First-ever use of a learning bot: rather than starting from a
     // near-degenerate policy (see rl.ts docs — untrained Q-values are all
     // 0, so it always ties toward the first action), run a quick headless
-    // self-play burst to warm-start it. This is run in small chunks via
-    // setTimeout so the "training..." progress UI actually gets to paint
-    // between chunks instead of freezing the tab for several seconds with
-    // no feedback (measured ~4ms/game in-browser, well over Node's speed).
-    setWarmupProgress({ done: 0, total: WARM_START_GAMES });
-    const epsilonAt = (progress: number) => WARM_START_EPSILON_START + (WARM_START_EPSILON_END - WARM_START_EPSILON_START) * progress;
+    // self-play burst to warm-start it.
+    runChunkedTraining(table, WARM_START_GAMES, setWarmupProgress, () => setState(createGame(players)));
+  }, []);
 
-    const runChunk = (done: number) => {
-      const batch = Math.min(WARM_START_CHUNK, WARM_START_GAMES - done);
-      trainSelfPlay(table, {
-        games: batch,
-        epsilonStart: epsilonAt(done / WARM_START_GAMES),
-        epsilonEnd: epsilonAt((done + batch) / WARM_START_GAMES),
-      });
-      const newDone = done + batch;
-      setWarmupProgress({ done: newDone, total: WARM_START_GAMES });
-      if (newDone < WARM_START_GAMES) {
-        setTimeout(() => runChunk(newDone), 0);
-      } else {
-        saveQTable(table);
-        setWarmupProgress(null);
-        setState(createGame(players));
-      }
-    };
-    setTimeout(() => runChunk(0), 0);
+  /** Lets the user pump up the learning bot from the setup screen before ever playing a game, on top of the automatic warm-start. */
+  const trainMore = useCallback((games: number) => {
+    runChunkedTraining(qTableRef.current!, games, setWarmupProgress, () => {});
   }, []);
 
   const actions: Actions = {
@@ -179,7 +161,43 @@ export function useGame() {
 
   const qTableStats: QTableStats = { size: tableSize(qTableRef.current), visits: totalVisits(qTableRef.current) };
 
-  return { state, error, start, actions, botStep, qTableStats, warmupProgress };
+  return { state, error, start, actions, botStep, qTableStats, warmupProgress, trainMore };
+}
+
+/**
+ * Runs `totalGames` self-play games against the shared Q-table in chunks
+ * (via setTimeout boundaries) so a "training…" progress UI can paint
+ * between chunks instead of one long frozen block. Shared by the automatic
+ * first-use warm-start and the manual "train more" control on the setup
+ * screen.
+ */
+function runChunkedTraining(
+  table: QTable,
+  totalGames: number,
+  setProgress: (p: WarmupProgress | null) => void,
+  onComplete: () => void,
+): void {
+  setProgress({ done: 0, total: totalGames });
+  const epsilonAt = (progress: number) => WARM_START_EPSILON_START + (WARM_START_EPSILON_END - WARM_START_EPSILON_START) * progress;
+
+  const runChunk = (done: number) => {
+    const batch = Math.min(WARM_START_CHUNK, totalGames - done);
+    trainSelfPlay(table, {
+      games: batch,
+      epsilonStart: epsilonAt(done / totalGames),
+      epsilonEnd: epsilonAt((done + batch) / totalGames),
+    });
+    const newDone = done + batch;
+    setProgress({ done: newDone, total: totalGames });
+    if (newDone < totalGames) {
+      setTimeout(() => runChunk(newDone), 0);
+    } else {
+      saveQTable(table);
+      setProgress(null);
+      onComplete();
+    }
+  };
+  setTimeout(() => runChunk(0), 0);
 }
 
 function recordStep(trajectories: Record<string, EpisodeStep[]>, playerId: string, step: EpisodeStep): void {
