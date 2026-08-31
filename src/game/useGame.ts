@@ -16,6 +16,7 @@ import {
   startRoundEnd,
 } from './scoring';
 import {
+  botIngredientHandCounts,
   botPersonalIngredient,
   chooseDrawSource,
   chooseHandTopUp,
@@ -23,9 +24,11 @@ import {
   chooseJokerIngredient,
   choosePlaceOrder,
   chooseMinimaleTieBreak,
+  mostCompleteHeldOrder,
 } from './bot';
 import { applyEpisodeReturn, encodeDrawSourceState, encodePlayOrderState, selectAction, totalVisits, tableSize, type EpisodeStep, type QTable } from './rl';
 import { trainSelfPlay } from './rlTraining';
+import { memoizedDecision, resetDecisionCache, strongChooseDraw, strongChooseIngredients, strongChooseOrder } from './rollout';
 import { loadQTable, saveQTable } from './rlPersistence';
 import { INGREDIENT_LABEL, type Ingredient } from './ingredients';
 import type { CardId, GameState, OrderCard, Player } from './types';
@@ -67,9 +70,9 @@ interface Actions {
 /**
  * Below this many recorded decision-visits, the learned policy is close to
  * naive, so a fresh game warm-starts it via a quick headless self-play
- * burst (measured: a few hundred ms for thousands of games in-browser).
- * Chunked across setTimeout boundaries purely so the "training…" progress
- * UI gets to paint instead of one frozen block.
+ * burst (measured: ~1-2s for WARM_START_GAMES in-browser). Chunked across
+ * setTimeout boundaries so the "training…" progress UI gets to paint
+ * instead of one frozen block.
  */
 const WARM_START_VISIT_THRESHOLD = 200;
 const WARM_START_GAMES = 6000;
@@ -106,6 +109,7 @@ export function useGame() {
   const start = useCallback((players: (string | PlayerSetup)[]) => {
     setError(null);
     trajectoriesRef.current = {};
+    resetDecisionCache();
 
     const table = qTableRef.current!;
     const hasLearningPlayer = players.some((p) => typeof p !== 'string' && p.learns);
@@ -244,7 +248,9 @@ function computeBotStep(s: GameState, actions: Actions, qTable: QTable, trajecto
     if (!player.isBot) return null;
     switch (s.phase.step) {
       case 'ingredients': {
-        const ids = chooseIngredientsToPlay(player);
+        const ids = player.strong
+          ? memoizedDecision(s, 'ing', () => strongChooseIngredients(s, player))
+          : chooseIngredientsToPlay(s, player);
         if (!ids) {
           return {
             player,
@@ -267,10 +273,18 @@ function computeBotStep(s: GameState, actions: Actions, qTable: QTable, trajecto
         if (player.handOrders.length === 0) {
           return { player, message: `${player.name} hat keine Bestellkarte.`, visual: null, run: () => actions.placeOrder(null) };
         }
+        if (player.strong) {
+          const id = memoizedDecision(s, 'order', () => strongChooseOrder(s, player));
+          const order = id ? player.handOrders.find((o) => o.id === id) : null;
+          const message = order
+            ? `${player.name} legt die Bestellkarte "${order.name}" in den Ofen.`
+            : `${player.name} überspringt die Bestellung.`;
+          return { player, message, visual: order ? { kind: 'order', order } : null, run: () => actions.placeOrder(id) };
+        }
         if (player.learns) {
           const stateKey = encodePlayOrderState(s, player);
           const action = selectAction(qTable, 'playOrder', stateKey, ['yes', 'no'] as const, LIVE_EPSILON);
-          const order = action === 'yes' ? player.handOrders[0] : null;
+          const order = action === 'yes' ? mostCompleteHeldOrder(s, player) ?? player.handOrders[0] : null;
           const message = order
             ? `${player.name} legt die Bestellkarte "${order.name}" in den Ofen.`
             : `${player.name} überspringt die Bestellung.`;
@@ -292,6 +306,16 @@ function computeBotStep(s: GameState, actions: Actions, qTable: QTable, trajecto
         return { player, message, visual: order ? { kind: 'order', order } : null, run: () => actions.placeOrder(id) };
       }
       case 'draw': {
+        if (player.strong) {
+          const source = memoizedDecision(s, 'draw', () => strongChooseDraw(s, player));
+          const label = source === 'supply' ? 'Nachziehstapel' : 'Kellner-Stapel';
+          return {
+            player,
+            message: `${player.name} zieht vom ${label}.`,
+            visual: { kind: 'facedown', label },
+            run: () => actions.drawCards(source),
+          };
+        }
         if (player.learns) {
           const stateKey = encodeDrawSourceState(s, player);
           const options: readonly ('supply' | 'waiter')[] =
@@ -308,7 +332,7 @@ function computeBotStep(s: GameState, actions: Actions, qTable: QTable, trajecto
             },
           };
         }
-        const source = chooseDrawSource(player);
+        const source = chooseDrawSource(s, player);
         const label = source === 'supply' ? 'Nachziehstapel' : 'Kellner-Stapel';
         return {
           player,
@@ -326,7 +350,13 @@ function computeBotStep(s: GameState, actions: Actions, qTable: QTable, trajecto
     if (!owner.isBot) return null;
     switch (pending.type) {
       case 'awaitingJokerChoice': {
-        const ingredient = chooseJokerIngredient(s.roundEnd.sortedIngredients, botPersonalIngredient(owner));
+        const jokerCount = pending.order.requirement.kind === 'monotoni' ? pending.order.requirement.jokerCount : undefined;
+        const ingredient = chooseJokerIngredient(
+          s.roundEnd.sortedIngredients,
+          botPersonalIngredient(owner),
+          botIngredientHandCounts(owner),
+          jokerCount,
+        );
         return {
           player: owner,
           message: `${owner.name} wählt ${INGREDIENT_LABEL[ingredient]} als Joker-Zutat.`,
@@ -335,7 +365,13 @@ function computeBotStep(s: GameState, actions: Actions, qTable: QTable, trajecto
         };
       }
       case 'awaitingMinimaleChoice': {
-        const ingredient = chooseMinimaleTieBreak(pending.candidates);
+        const otherCount = pending.order.requirement.kind === 'minimale' ? pending.order.requirement.otherCount : undefined;
+        const ingredient = chooseMinimaleTieBreak(
+          pending.candidates,
+          s.roundEnd.sortedIngredients,
+          botIngredientHandCounts(owner),
+          otherCount,
+        );
         return {
           player: owner,
           message: `${owner.name} wählt ${INGREDIENT_LABEL[ingredient]}.`,

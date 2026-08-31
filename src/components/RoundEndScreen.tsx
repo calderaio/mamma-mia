@@ -2,7 +2,7 @@ import { useState } from 'react';
 import type { CardId, GameState, IngredientCard, OrderRequirement } from '../game/types';
 import type { Ingredient } from '../game/ingredients';
 import { INGREDIENTS, INGREDIENT_LABEL } from '../game/ingredients';
-import { playerBadge } from '../game/colors';
+import { PERSONAL_INGREDIENT, playerBadge } from '../game/colors';
 import { IngredientCardView, OrderCardView } from './Card';
 import { LogPanel } from './TurnScreen';
 
@@ -24,6 +24,12 @@ export function RoundEndScreen({ state, actions, error }: { state: GameState; ac
   const { roundEnd } = state;
   const holder = state.players.find((p) => p.id === roundEnd.holderId)!;
   const pending = roundEnd.pending;
+
+  // With exactly one human at the table, keep their hand on screen the whole
+  // reveal — you need it to judge joker / Minimale picks and hand top-ups.
+  const humans = state.players.filter((p) => !p.isBot);
+  const me = humans.length === 1 ? humans[0] : null;
+  const myHandCounts = countIngredients(me?.hand ?? []);
 
   function toggleHandCard(id: CardId) {
     setSelectedHandCards((prev) => (prev.includes(id) ? prev.filter((c) => c !== id) : [...prev, id]));
@@ -120,36 +126,44 @@ export function RoundEndScreen({ state, actions, error }: { state: GameState; ac
       )}
 
       {pending?.type === 'awaitingJokerChoice' && (
-        <PendingCard title={`${pending.order.name}: Joker-Zutat wählen`} order={pending.order}>
+        <PendingCard
+          title={`${pending.order.name}: Joker-Zutat wählen`}
+          order={pending.order}
+          subtitle="Du brauchst 6 Karten dieser Zutat (Tisch + Hand-Ergänzung)."
+        >
           <div className="flex flex-wrap justify-center gap-2">
-            {INGREDIENTS.map((ingredient) => (
-              <button
+            {INGREDIENTS.filter((i) => i !== PERSONAL_INGREDIENT[pending.order.color]).map((ingredient) => (
+              <ChoiceButton
                 key={ingredient}
-                type="button"
+                ingredient={ingredient}
+                table={roundEnd.sortedIngredients[ingredient].length}
+                hand={myHandCounts[ingredient] ?? 0}
+                need={6}
+                showHand={me !== null}
                 onClick={() => actions.chooseJoker(ingredient)}
-                className="rounded-lg border-2 px-4 py-2 hover:border-[var(--tomato)]"
-                style={{ borderColor: 'var(--crust-border)' }}
-              >
-                {INGREDIENT_LABEL[ingredient]}
-              </button>
+              />
             ))}
           </div>
         </PendingCard>
       )}
 
       {pending?.type === 'awaitingMinimaleChoice' && (
-        <PendingCard title={`${pending.order.name}: seltenste Zutat wählen (Gleichstand)`} order={pending.order}>
+        <PendingCard
+          title={`${pending.order.name}: seltenste Zutat wählen (Gleichstand)`}
+          order={pending.order}
+          subtitle="Du brauchst 3 Karten dieser Zutat (Tisch + Hand-Ergänzung)."
+        >
           <div className="flex flex-wrap justify-center gap-2">
             {pending.candidates.map((ingredient) => (
-              <button
+              <ChoiceButton
                 key={ingredient}
-                type="button"
+                ingredient={ingredient}
+                table={roundEnd.sortedIngredients[ingredient].length}
+                hand={myHandCounts[ingredient] ?? 0}
+                need={3}
+                showHand={me !== null}
                 onClick={() => actions.chooseMinimaleIngredient(ingredient)}
-                className="rounded-lg border-2 px-4 py-2 hover:border-[var(--tomato)]"
-                style={{ borderColor: 'var(--crust-border)' }}
-              >
-                {INGREDIENT_LABEL[ingredient]}
-              </button>
+              />
             ))}
           </div>
         </PendingCard>
@@ -197,8 +211,79 @@ export function RoundEndScreen({ state, actions, error }: { state: GameState; ac
         </PendingCard>
       )}
 
+      {me && <MyHandStrip player={me} />}
+
       <LogPanel state={state} />
     </div>
+  );
+}
+
+function countIngredients(hand: { kind: string; ingredient?: Ingredient }[]): Partial<Record<Ingredient, number>> {
+  const counts: Partial<Record<Ingredient, number>> = {};
+  for (const card of hand) {
+    if (card.kind === 'ingredient' && card.ingredient) counts[card.ingredient] = (counts[card.ingredient] ?? 0) + 1;
+  }
+  return counts;
+}
+
+function ChoiceButton({
+  ingredient,
+  table,
+  hand,
+  need,
+  showHand,
+  onClick,
+}: {
+  ingredient: Ingredient;
+  table: number;
+  hand: number;
+  need: number;
+  showHand: boolean;
+  onClick: () => void;
+}) {
+  const deliverable = table + hand >= need;
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="flex flex-col items-center gap-0.5 rounded-lg border-2 px-4 py-2 hover:border-[var(--tomato)]"
+      style={{ borderColor: deliverable ? 'var(--basil, #4a7c2f)' : 'var(--crust-border)' }}
+    >
+      <span className="font-semibold">{INGREDIENT_LABEL[ingredient]}</span>
+      <span className="text-xs opacity-70">
+        Tisch: {table}
+        {showHand && ` · Hand: ${hand}`}
+      </span>
+    </button>
+  );
+}
+
+function MyHandStrip({ player }: { player: GameState['players'][number] }) {
+  const ingredients = player.hand.filter((c): c is IngredientCard => c.kind === 'ingredient');
+  return (
+    <section className="flex flex-col gap-2">
+      <h2 className="text-xs font-semibold tracking-wide uppercase opacity-60">Meine Handkarten ({ingredients.length})</h2>
+      <div className="pizzeria-panel flex flex-col gap-3 p-4">
+        {player.handOrders.length > 0 && (
+          <div className="flex flex-wrap justify-center gap-2">
+            {player.handOrders.map((order) => (
+              <OrderCardView key={order.id} color={order.color} name={order.name} requirement={order.requirement} />
+            ))}
+          </div>
+        )}
+        {ingredients.length === 0 ? (
+          <p className="text-center text-sm opacity-50">Keine Zutatenkarten auf der Hand.</p>
+        ) : (
+          <div className="flex flex-wrap justify-center">
+            {ingredients.map((c, i) => (
+              <div key={c.id} className={i > 0 ? '-ml-4' : ''}>
+                <IngredientCardView ingredient={c.ingredient} />
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </section>
   );
 }
 

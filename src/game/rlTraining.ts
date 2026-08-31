@@ -1,11 +1,15 @@
 import { createGame } from './setup';
 import { confirmPassDevice, drawCards, placeIngredients, placeNoIngredients, placeOrder } from './engine';
 import {
+  botIngredientHandCounts,
   chooseHandTopUp as resolveHandTopUpBotChoice,
+  chooseDrawSource,
   chooseJokerIngredient,
   chooseMinimaleTieBreak,
   chooseIngredientsToPlay,
+  choosePlaceOrder,
   botPersonalIngredient,
+  mostCompleteHeldOrder,
 } from './bot';
 import { chooseJoker, chooseMinimaleIngredient, resolveHandTopUp, revealNext, startRoundEnd } from './scoring';
 import { applyEpisodeReturn, encodeDrawSourceState, encodePlayOrderState, selectAction, type EpisodeStep, type QTable } from './rl';
@@ -56,24 +60,26 @@ export function playEpisode(
       const mode = policies[state.currentPlayerIndex];
 
       if (state.phase.step === 'ingredients') {
-        const ids = chooseIngredientsToPlay(player);
+        const ids = chooseIngredientsToPlay(state, player);
         state = ids ? placeIngredients(state, ids) : placeNoIngredients(state);
         continue;
       }
 
       if (state.phase.step === 'order') {
-        let playIt: boolean;
+        let orderId: string | null;
         if (player.handOrders.length === 0) {
-          playIt = false;
+          orderId = null;
         } else if (mode === 'rl') {
           const stateKey = encodePlayOrderState(state, player);
           const action = selectAction(table, 'playOrder', stateKey, ['yes', 'no'] as const, epsilon, random);
           trajectories[player.id].push({ decision: 'playOrder', stateKey, action });
-          playIt = action === 'yes';
+          // RL owns the timing decision; when it says "play", just place the
+          // order it is closest to finishing.
+          orderId = action === 'yes' ? mostCompleteHeldOrder(state, player)?.id ?? player.handOrders[0].id : null;
         } else {
-          playIt = state.oven.length >= 4;
+          orderId = choosePlaceOrder(state, player);
         }
-        state = placeOrder(state, playIt ? player.handOrders[0].id : null);
+        state = placeOrder(state, orderId);
         continue;
       }
 
@@ -85,7 +91,7 @@ export function playEpisode(
         source = selectAction(table, 'drawSource', stateKey, options, epsilon, random);
         trajectories[player.id].push({ decision: 'drawSource', stateKey, action: source });
       } else {
-        source = player.handOrders.length === 0 && player.waiter.length > 0 ? 'waiter' : 'supply';
+        source = chooseDrawSource(state, player);
       }
       const afterDraw = drawCards(state, source);
       state = afterDraw.phase.name === 'roundEnd' ? startRoundEnd(afterDraw) : afterDraw;
@@ -101,12 +107,24 @@ export function playEpisode(
       const owner = state.players.find((p) => p.color === pending.order.color)!;
       switch (pending.type) {
         case 'awaitingJokerChoice': {
-          const ing = chooseJokerIngredient(state.roundEnd!.sortedIngredients, botPersonalIngredient(owner));
+          const jokerCount = pending.order.requirement.kind === 'monotoni' ? pending.order.requirement.jokerCount : undefined;
+          const ing = chooseJokerIngredient(
+            state.roundEnd!.sortedIngredients,
+            botPersonalIngredient(owner),
+            botIngredientHandCounts(owner),
+            jokerCount,
+          );
           state = chooseJoker(state, ing);
           break;
         }
         case 'awaitingMinimaleChoice': {
-          const ing = chooseMinimaleTieBreak(pending.candidates);
+          const otherCount = pending.order.requirement.kind === 'minimale' ? pending.order.requirement.otherCount : undefined;
+          const ing = chooseMinimaleTieBreak(
+            pending.candidates,
+            state.roundEnd!.sortedIngredients,
+            botIngredientHandCounts(owner),
+            otherCount,
+          );
           state = chooseMinimaleIngredient(state, ing);
           break;
         }

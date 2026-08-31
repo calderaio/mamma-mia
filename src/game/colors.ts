@@ -29,8 +29,9 @@ export const PLAYER_COLOR_CLASS: Record<PlayerColor, string> = {
   red: 'bg-red-600 text-white border-red-800',
 };
 
-/** Prefix for player names in the UI: 🎓 for the learning bot, 🤖 for a fixed-heuristic bot, nothing for a human. */
-export function playerBadge(player: { isBot: boolean; learns?: boolean }): string {
+/** Prefix for player names in the UI: 🧠 for the rollout bot, 🎓 for the learning bot, 🤖 for a fixed-heuristic bot, nothing for a human. */
+export function playerBadge(player: { isBot: boolean; learns?: boolean; strong?: boolean }): string {
+  if (player.strong) return '🧠 ';
   if (player.learns) return '🎓 ';
   if (player.isBot) return '🤖 ';
   return '';

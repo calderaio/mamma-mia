@@ -7,7 +7,7 @@ import type { GameState, Player } from './types';
 const STARTING_HAND_SIZE = 6;
 
 /** Ingredient cards of each kind removed from the deck before shuffling, by player count. */
-const REMOVAL_PER_KIND_BY_PLAYER_COUNT: Record<number, number> = {
+export const REMOVAL_PER_KIND_BY_PLAYER_COUNT: Record<number, number> = {
   2: 5,
   3: 3,
   4: 1,
@@ -23,11 +23,14 @@ export interface PlayerSetup {
   name: string;
   isBot?: boolean;
   learns?: boolean;
+  strong?: boolean;
 }
 
 export function createGame(playerSetups: (string | PlayerSetup)[], options: CreateGameOptions = {}): GameState {
   const normalized = playerSetups.map((p) =>
-    typeof p === 'string' ? { name: p, isBot: false, learns: false } : { name: p.name, isBot: p.isBot ?? false, learns: p.learns ?? false },
+    typeof p === 'string'
+      ? { name: p, isBot: false, learns: false, strong: false }
+      : { name: p.name, isBot: p.isBot ?? false, learns: p.learns ?? false, strong: p.strong ?? false },
   );
   const playerCount = normalized.length;
   if (playerCount < 2 || playerCount > 5) {
@@ -44,7 +47,7 @@ export function createGame(playerSetups: (string | PlayerSetup)[], options: Crea
   const colors = PLAYER_COLORS.slice(0, playerCount);
   const orderDecks = buildAllOrderDecks(PERSONAL_INGREDIENT);
 
-  const players: Player[] = normalized.map(({ name, isBot, learns }, index) => {
+  const players: Player[] = normalized.map(({ name, isBot, learns, strong }, index) => {
     const color = colors[index];
     const hand = ingredientDeck.splice(0, STARTING_HAND_SIZE);
     const waiter = shuffle(orderDecks[color], random);
@@ -60,6 +63,7 @@ export function createGame(playerSetups: (string | PlayerSetup)[], options: Crea
       hasMammaMia: false,
       isBot,
       learns,
+      strong,
     };
   });
 

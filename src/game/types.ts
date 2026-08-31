@@ -51,6 +51,8 @@ export interface Player {
   isBot: boolean;
   /** Only meaningful when isBot is true: use the self-play-trained RL policy for order-timing/draw-source decisions instead of the fixed heuristic. */
   learns?: boolean;
+  /** Only meaningful when isBot is true: use determinized Monte-Carlo rollouts for turn decisions (the "strong" bot). Takes precedence over `learns`. */
+  strong?: boolean;
 }
 
 export type TurnStep = 'ingredients' | 'order' | 'draw';

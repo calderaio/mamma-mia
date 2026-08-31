@@ -53,7 +53,7 @@ function App() {
       return (
         <GameEndScreen
           state={state}
-          onRestart={() => start(state.players.map((p) => ({ name: p.name, isBot: p.isBot, learns: p.learns })))}
+          onRestart={() => start(state.players.map((p) => ({ name: p.name, isBot: p.isBot, learns: p.learns, strong: p.strong })))}
         />
       );
     default:

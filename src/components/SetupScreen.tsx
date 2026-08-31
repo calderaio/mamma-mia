@@ -3,10 +3,15 @@ import type { PlayerSetup } from '../game/setup';
 import type { QTableStats } from '../game/useGame';
 import type { Preferences } from '../game/preferences';
 
-type SeatKind = 'human' | 'bot' | 'learning';
+type SeatKind = 'human' | 'bot' | 'learning' | 'strong';
 
-const SEAT_CYCLE: SeatKind[] = ['human', 'bot', 'learning'];
-const SEAT_LABEL: Record<SeatKind, string> = { human: '🙂 Mensch', bot: '🤖 Bot', learning: '🎓 Lernender Bot' };
+const SEAT_CYCLE: SeatKind[] = ['human', 'bot', 'learning', 'strong'];
+const SEAT_LABEL: Record<SeatKind, string> = {
+  human: '🙂 Mensch',
+  bot: '🤖 Bot',
+  learning: '🎓 Lernender Bot',
+  strong: '🧠 Starker Bot',
+};
 
 export function SetupScreen({
   onStart,
@@ -24,7 +29,7 @@ export function SetupScreen({
   const [count, setCount] = useState(3);
   const [names, setNames] = useState<string[]>(['Spieler 1', 'Alberto', 'Giulia', 'Marco', 'Sofia']);
   // Standard setup: you vs N bots — no hotseat hand-off needed for the sole human.
-  const [seats, setSeats] = useState<SeatKind[]>(['human', 'learning', 'learning', 'learning', 'learning']);
+  const [seats, setSeats] = useState<SeatKind[]>(['human', 'strong', 'strong', 'strong', 'strong']);
 
   function cycleSeat(i: number) {
     setSeats((prev) => prev.map((s, idx) => (idx === i ? SEAT_CYCLE[(SEAT_CYCLE.indexOf(s) + 1) % SEAT_CYCLE.length] : s)));
@@ -93,6 +98,10 @@ export function SetupScreen({
 
       <div className="pizzeria-panel flex flex-col gap-2 p-3 text-xs">
         <p className="opacity-75">
+          🧠 Der Starke Bot denkt jeden Zug durch: er würfelt die verdeckten Karten plausibel aus und simuliert
+          hunderte Spielverläufe pro möglichem Zug. Kein Training nötig, aber er überlegt kurz.
+        </p>
+        <p className="opacity-75">
           🎓 Der Lernende Bot merkt sich Ergebnisse über Spiele hinweg (im Browser gespeichert) und wird dadurch
           langsam besser.{' '}
           {qTableStats.visits > 0
@@ -120,6 +129,7 @@ export function SetupScreen({
               name: n.trim() || `Spieler ${i + 1}`,
               isBot: seats[i] !== 'human',
               learns: seats[i] === 'learning',
+              strong: seats[i] === 'strong',
             })),
           )
         }
