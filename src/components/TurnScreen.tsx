@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import type { CardId, GameState, IngredientCard } from '../game/types';
 import type { Ingredient } from '../game/ingredients';
+import type { Preferences } from '../game/preferences';
 import { PLAYER_COLOR_CLASS, PLAYER_LABEL, playerBadge } from '../game/colors';
 import { FaceDownStack, IngredientCardView, OrderCardView, OvenStackView } from './Card';
 
@@ -11,7 +12,17 @@ interface Actions {
   drawCards: (source: 'supply' | 'waiter') => void;
 }
 
-export function TurnScreen({ state, actions, error }: { state: GameState; actions: Actions; error: string | null }) {
+export function TurnScreen({
+  state,
+  actions,
+  error,
+  preferences,
+}: {
+  state: GameState;
+  actions: Actions;
+  error: string | null;
+  preferences: Preferences;
+}) {
   const [selectedIngredientIds, setSelectedIngredientIds] = useState<CardId[]>([]);
   const [selectedOrderId, setSelectedOrderId] = useState<CardId | null>(null);
   if (state.phase.name !== 'turn') return null;
@@ -45,7 +56,7 @@ export function TurnScreen({ state, actions, error }: { state: GameState; action
 
       <section className="pizzeria-panel flex flex-wrap items-end justify-center gap-6 p-4">
         <FaceDownStack count={state.supply.length} label="Nachziehstapel" />
-        <OvenStackView count={state.oven.length} topCard={state.oven.at(-1) ?? null} />
+        <OvenStackView count={state.oven.length} topCard={state.oven.at(-1) ?? null} messy={preferences.messyPile} />
         <FaceDownStack count={player.waiter.length} label="Mein Kellner-Stapel" />
         <FaceDownStack count={player.delivered.length} label="Meine Lieferungen" />
       </section>

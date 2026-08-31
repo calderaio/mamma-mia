@@ -1,4 +1,5 @@
 import { useGame } from './game/useGame';
+import { usePreferences } from './game/preferences';
 import { SetupScreen } from './components/SetupScreen';
 import { PassDeviceScreen } from './components/PassDeviceScreen';
 import { BotTurnScreen } from './components/BotTurnScreen';
@@ -9,13 +10,22 @@ import { GameEndScreen } from './components/GameEndScreen';
 
 function App() {
   const { state, error, start, actions, botStep, qTableStats, warmupProgress, trainMore } = useGame();
+  const { preferences, updatePreferences } = usePreferences();
 
   if (warmupProgress) {
     return <WarmupScreen progress={warmupProgress} />;
   }
 
   if (!state) {
-    return <SetupScreen onStart={start} qTableStats={qTableStats} onTrainMore={trainMore} />;
+    return (
+      <SetupScreen
+        onStart={start}
+        qTableStats={qTableStats}
+        onTrainMore={trainMore}
+        preferences={preferences}
+        onUpdatePreferences={updatePreferences}
+      />
+    );
   }
 
   // Whenever it's a bot's turn to act, show what it would do and require a
@@ -34,7 +44,7 @@ function App() {
         />
       );
     case 'turn':
-      return <TurnScreen state={state} actions={actions} error={error} />;
+      return <TurnScreen state={state} actions={actions} error={error} preferences={preferences} />;
     case 'roundEnd':
       return <RoundEndScreen state={state} actions={actions} error={error} />;
     case 'gameEnd':

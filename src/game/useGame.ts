@@ -28,11 +28,17 @@ import { applyEpisodeReturn, encodeDrawSourceState, encodePlayOrderState, select
 import { trainSelfPlay } from './rlTraining';
 import { loadQTable, saveQTable } from './rlPersistence';
 import { INGREDIENT_LABEL, type Ingredient } from './ingredients';
-import type { CardId, GameState, Player } from './types';
+import type { CardId, GameState, OrderCard, Player } from './types';
+
+export type BotStepVisual =
+  | { kind: 'ingredient'; ingredient: Ingredient; count: number }
+  | { kind: 'order'; order: OrderCard }
+  | { kind: 'facedown'; label: string };
 
 export interface BotStep {
   player: Player;
   message: string;
+  visual: BotStepVisual | null;
   run: () => void;
 }
 
@@ -89,7 +95,7 @@ export function useGame() {
       if (!prev) return prev;
       try {
         setError(null);
-        return fn(prev);
+        return settleAutoTransitions(fn(prev));
       } catch (e) {
         setError(e instanceof GameError ? e.message : String(e));
         return prev;
@@ -104,7 +110,7 @@ export function useGame() {
     const table = qTableRef.current!;
     const hasLearningPlayer = players.some((p) => typeof p !== 'string' && p.learns);
     if (!hasLearningPlayer || totalVisits(table) >= WARM_START_VISIT_THRESHOLD) {
-      setState(createGame(players));
+      setState(settleAutoTransitions(createGame(players)));
       return;
     }
 
@@ -112,7 +118,7 @@ export function useGame() {
     // near-degenerate policy (see rl.ts docs — untrained Q-values are all
     // 0, so it always ties toward the first action), run a quick headless
     // self-play burst to warm-start it.
-    runChunkedTraining(table, WARM_START_GAMES, setWarmupProgress, () => setState(createGame(players)));
+    runChunkedTraining(table, WARM_START_GAMES, setWarmupProgress, () => setState(settleAutoTransitions(createGame(players))));
   }, []);
 
   /** Lets the user pump up the learning bot from the setup screen before ever playing a game, on top of the automatic warm-start. */
@@ -165,6 +171,28 @@ export function useGame() {
 }
 
 /**
+ * When there's exactly one human in the game (the common "me vs N bots"
+ * setup), the pass-device hand-off screen is pointless — there's no one
+ * else to hide the hand from, it's the same person at the screen the whole
+ * game. So any passDevice transition landing on that sole human is
+ * auto-confirmed immediately, keeping their hand continuously visible.
+ * A bot's passDevice turn is deliberately NOT auto-skipped here — that one
+ * stays gated behind the BotTurnScreen's "Weiter" click so bot moves stay
+ * visible/steppable. With 2+ humans, passDevice is left alone entirely: a
+ * real hotseat hand-off is still needed between different people.
+ */
+function settleAutoTransitions(state: GameState): GameState {
+  let s = state;
+  while (s.phase.name === 'passDevice') {
+    const next = s.players[s.phase.nextPlayerIndex];
+    const humanCount = s.players.filter((p) => !p.isBot).length;
+    if (next.isBot || humanCount !== 1) break;
+    s = confirmPassDevice(s);
+  }
+  return s;
+}
+
+/**
  * Runs `totalGames` self-play games against the shared Q-table in chunks
  * (via setTimeout boundaries) so a "training…" progress UI can paint
  * between chunks instead of one long frozen block. Shared by the automatic
@@ -208,7 +236,7 @@ function computeBotStep(s: GameState, actions: Actions, qTable: QTable, trajecto
   if (s.phase.name === 'passDevice') {
     const next = s.players[s.phase.nextPlayerIndex];
     if (!next.isBot) return null;
-    return { player: next, message: `${next.name} ist am Zug.`, run: () => actions.confirmPassDevice() };
+    return { player: next, message: `${next.name} ist am Zug.`, visual: null, run: () => actions.confirmPassDevice() };
   }
 
   if (s.phase.name === 'turn') {
@@ -218,15 +246,26 @@ function computeBotStep(s: GameState, actions: Actions, qTable: QTable, trajecto
       case 'ingredients': {
         const ids = chooseIngredientsToPlay(player);
         if (!ids) {
-          return { player, message: `${player.name} hat keine Zutatenkarte und setzt aus.`, run: () => actions.placeNoIngredients() };
+          return {
+            player,
+            message: `${player.name} hat keine Zutatenkarte und setzt aus.`,
+            visual: null,
+            run: () => actions.placeNoIngredients(),
+          };
         }
         const card = player.hand.find((c) => c.id === ids[0]);
-        const kind = card && card.kind === 'ingredient' ? INGREDIENT_LABEL[card.ingredient] : '';
-        return { player, message: `${player.name} legt ${ids.length}x ${kind} in den Ofen.`, run: () => actions.placeIngredients(ids) };
+        const ingredient = card && card.kind === 'ingredient' ? card.ingredient : null;
+        const kind = ingredient ? INGREDIENT_LABEL[ingredient] : '';
+        return {
+          player,
+          message: `${player.name} legt ${ids.length}x ${kind} in den Ofen.`,
+          visual: ingredient ? { kind: 'ingredient', ingredient, count: ids.length } : null,
+          run: () => actions.placeIngredients(ids),
+        };
       }
       case 'order': {
         if (player.handOrders.length === 0) {
-          return { player, message: `${player.name} hat keine Bestellkarte.`, run: () => actions.placeOrder(null) };
+          return { player, message: `${player.name} hat keine Bestellkarte.`, visual: null, run: () => actions.placeOrder(null) };
         }
         if (player.learns) {
           const stateKey = encodePlayOrderState(s, player);
@@ -238,6 +277,7 @@ function computeBotStep(s: GameState, actions: Actions, qTable: QTable, trajecto
           return {
             player,
             message,
+            visual: order ? { kind: 'order', order } : null,
             run: () => {
               recordStep(trajectories, player.id, { decision: 'playOrder', stateKey, action });
               actions.placeOrder(order ? order.id : null);
@@ -249,7 +289,7 @@ function computeBotStep(s: GameState, actions: Actions, qTable: QTable, trajecto
         const message = order
           ? `${player.name} legt die Bestellkarte "${order.name}" in den Ofen.`
           : `${player.name} überspringt die Bestellung.`;
-        return { player, message, run: () => actions.placeOrder(id) };
+        return { player, message, visual: order ? { kind: 'order', order } : null, run: () => actions.placeOrder(id) };
       }
       case 'draw': {
         if (player.learns) {
@@ -261,6 +301,7 @@ function computeBotStep(s: GameState, actions: Actions, qTable: QTable, trajecto
           return {
             player,
             message: `${player.name} zieht vom ${label}.`,
+            visual: { kind: 'facedown', label },
             run: () => {
               recordStep(trajectories, player.id, { decision: 'drawSource', stateKey, action: source });
               actions.drawCards(source);
@@ -269,7 +310,12 @@ function computeBotStep(s: GameState, actions: Actions, qTable: QTable, trajecto
         }
         const source = chooseDrawSource(player);
         const label = source === 'supply' ? 'Nachziehstapel' : 'Kellner-Stapel';
-        return { player, message: `${player.name} zieht vom ${label}.`, run: () => actions.drawCards(source) };
+        return {
+          player,
+          message: `${player.name} zieht vom ${label}.`,
+          visual: { kind: 'facedown', label },
+          run: () => actions.drawCards(source),
+        };
       }
     }
   }
@@ -284,6 +330,7 @@ function computeBotStep(s: GameState, actions: Actions, qTable: QTable, trajecto
         return {
           player: owner,
           message: `${owner.name} wählt ${INGREDIENT_LABEL[ingredient]} als Joker-Zutat.`,
+          visual: { kind: 'ingredient', ingredient, count: 1 },
           run: () => actions.chooseJoker(ingredient),
         };
       }
@@ -292,6 +339,7 @@ function computeBotStep(s: GameState, actions: Actions, qTable: QTable, trajecto
         return {
           player: owner,
           message: `${owner.name} wählt ${INGREDIENT_LABEL[ingredient]}.`,
+          visual: { kind: 'ingredient', ingredient, count: 1 },
           run: () => actions.chooseMinimaleIngredient(ingredient),
         };
       }
@@ -300,7 +348,7 @@ function computeBotStep(s: GameState, actions: Actions, qTable: QTable, trajecto
         const message = ids
           ? `${owner.name} ergänzt aus der Hand und liefert ${pending.order.name} aus!`
           : `${owner.name} kann ${pending.order.name} nicht vervollständigen.`;
-        return { player: owner, message, run: () => actions.resolveHandTopUp(ids) };
+        return { player: owner, message, visual: { kind: 'order', order: pending.order }, run: () => actions.resolveHandTopUp(ids) };
       }
     }
   }

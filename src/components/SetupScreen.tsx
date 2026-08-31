@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import type { PlayerSetup } from '../game/setup';
 import type { QTableStats } from '../game/useGame';
+import type { Preferences } from '../game/preferences';
 
 type SeatKind = 'human' | 'bot' | 'learning';
 
@@ -11,14 +12,19 @@ export function SetupScreen({
   onStart,
   qTableStats,
   onTrainMore,
+  preferences,
+  onUpdatePreferences,
 }: {
   onStart: (players: PlayerSetup[]) => void;
   qTableStats: QTableStats;
   onTrainMore: (games: number) => void;
+  preferences: Preferences;
+  onUpdatePreferences: (patch: Partial<Preferences>) => void;
 }) {
   const [count, setCount] = useState(3);
   const [names, setNames] = useState<string[]>(['Spieler 1', 'Spieler 2', 'Spieler 3', 'Spieler 4', 'Spieler 5']);
-  const [seats, setSeats] = useState<SeatKind[]>(['human', 'human', 'human', 'human', 'human']);
+  // Standard setup: you vs N bots — no hotseat hand-off needed for the sole human.
+  const [seats, setSeats] = useState<SeatKind[]>(['human', 'learning', 'learning', 'learning', 'learning']);
 
   function cycleSeat(i: number) {
     setSeats((prev) => prev.map((s, idx) => (idx === i ? SEAT_CYCLE[(SEAT_CYCLE.indexOf(s) + 1) % SEAT_CYCLE.length] : s)));
@@ -33,7 +39,8 @@ export function SetupScreen({
         <div className="mx-auto mt-1 h-1 w-40 rounded-full bg-[linear-gradient(90deg,var(--basil)_0%,var(--basil)_33%,#fff8ea_33%,#fff8ea_66%,var(--tomato)_66%)]" />
       </div>
       <p className="text-sm opacity-75">
-        2–5 Spieler, Hotseat-Modus. Menschen und Bots könnt ihr beliebig mischen. 🍕
+        Standard: du gegen bis zu 4 Bots. Für Hotseat mit mehreren Menschen einfach weitere Spieler auf 🙂 Mensch
+        stellen. 🍕
       </p>
 
       <div className="flex justify-center gap-2">
@@ -74,6 +81,15 @@ export function SetupScreen({
           </div>
         ))}
       </div>
+
+      <label className="flex cursor-pointer items-center justify-center gap-2 text-sm opacity-75">
+        <input
+          type="checkbox"
+          checked={preferences.messyPile}
+          onChange={(e) => onUpdatePreferences({ messyPile: e.target.checked })}
+        />
+        🗂️ Unordentlicher Ofen-Stapel (Kartenränder sichtbar)
+      </label>
 
       <div className="pizzeria-panel flex flex-col gap-2 p-3 text-xs">
         <p className="opacity-75">
