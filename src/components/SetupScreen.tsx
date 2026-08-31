@@ -22,7 +22,7 @@ export function SetupScreen({
   onUpdatePreferences: (patch: Partial<Preferences>) => void;
 }) {
   const [count, setCount] = useState(3);
-  const [names, setNames] = useState<string[]>(['Spieler 1', 'Spieler 2', 'Spieler 3', 'Spieler 4', 'Spieler 5']);
+  const [names, setNames] = useState<string[]>(['Spieler 1', 'Alberto', 'Giulia', 'Marco', 'Sofia']);
   // Standard setup: you vs N bots — no hotseat hand-off needed for the sole human.
   const [seats, setSeats] = useState<SeatKind[]>(['human', 'learning', 'learning', 'learning', 'learning']);
 

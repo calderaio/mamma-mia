@@ -1,9 +1,11 @@
 import { useState } from 'react';
-import type { CardId, GameState, IngredientCard } from '../game/types';
+import type { CardId, GameState, IngredientCard, Player } from '../game/types';
 import type { Ingredient } from '../game/ingredients';
 import type { Preferences } from '../game/preferences';
+import type { BotStep } from '../game/useGame';
 import { PLAYER_COLOR_CLASS, PLAYER_LABEL, playerBadge } from '../game/colors';
 import { FaceDownStack, IngredientCardView, OrderCardView, OvenStackView } from './Card';
+import { BotStepVisual } from './BotTurnScreen';
 
 interface Actions {
   placeIngredients: (cardIds: CardId[]) => void;
@@ -12,23 +14,43 @@ interface Actions {
   drawCards: (source: 'supply' | 'waiter') => void;
 }
 
+/**
+ * The persistent table view. Whether it's your turn or a bot's, this stays
+ * on screen: the shared table (supply + oven) in the middle, the other
+ * guests' stacks along the top, and your own hand/orders/stacks always
+ * visible at the bottom — like actually sitting at the table. A bot's move
+ * shows up as a banner at the table instead of swapping the whole screen
+ * away from your hand.
+ */
 export function TurnScreen({
   state,
   actions,
   error,
   preferences,
+  botStep,
 }: {
   state: GameState;
   actions: Actions;
   error: string | null;
   preferences: Preferences;
+  botStep: BotStep | null;
 }) {
   const [selectedIngredientIds, setSelectedIngredientIds] = useState<CardId[]>([]);
   const [selectedOrderId, setSelectedOrderId] = useState<CardId | null>(null);
-  if (state.phase.name !== 'turn') return null;
-  const player = state.players[state.currentPlayerIndex];
+  if (state.phase.name !== 'turn' && state.phase.name !== 'passDevice') return null;
 
-  const ingredientCards = player.hand.filter((c): c is IngredientCard => c.kind === 'ingredient');
+  const actingPlayer: Player =
+    state.phase.name === 'turn' ? state.players[state.currentPlayerIndex] : state.players[state.phase.nextPlayerIndex];
+  // With exactly one human at the table, always show THEIR hand regardless
+  // of whose turn it is. With 2+ humans (real hotseat), fall back to
+  // whoever's actually acting, since hiding hands between different
+  // people still matters there.
+  const humans = state.players.filter((p) => !p.isBot);
+  const me = humans.length === 1 ? humans[0] : actingPlayer;
+  const isMyTurn = state.phase.name === 'turn' && actingPlayer.id === me.id;
+  const myStep = isMyTurn && state.phase.name === 'turn' ? state.phase.step : null;
+
+  const ingredientCards = me.hand.filter((c): c is IngredientCard => c.kind === 'ingredient');
   const hasIngredients = ingredientCards.length > 0;
   const selectedKind: Ingredient | null =
     selectedIngredientIds.length > 0
@@ -46,41 +68,58 @@ export function TurnScreen({
   return (
     <div className="mx-auto flex max-w-4xl flex-col gap-6 p-4">
       <header className="flex items-center justify-between">
-        <div>
-          <span className="text-sm opacity-70">Runde {state.round} / {state.maxRounds}</span>
-          <h1 className={`ml-3 inline-block rounded-full border-2 px-4 py-1 font-bold ${PLAYER_COLOR_CLASS[player.color]}`}>
-            {playerBadge(player)}{player.name} ist am Zug
-          </h1>
-        </div>
+        <span className="text-sm opacity-70">Runde {state.round} / {state.maxRounds}</span>
+        <h1 className={`inline-block rounded-full border-2 px-4 py-1 font-bold ${PLAYER_COLOR_CLASS[actingPlayer.color]}`}>
+          {playerBadge(actingPlayer)}{actingPlayer.name} ist am Zug
+        </h1>
       </header>
 
-      <section className="pizzeria-panel flex flex-wrap items-end justify-center gap-6 p-4">
-        <FaceDownStack count={state.supply.length} label="Nachziehstapel" />
-        <OvenStackView count={state.oven.length} topCard={state.oven.at(-1) ?? null} messy={preferences.messyPile} />
-        <FaceDownStack count={player.waiter.length} label="Mein Kellner-Stapel" />
-        <FaceDownStack count={player.delivered.length} label="Meine Lieferungen" />
+      <section className="flex flex-col gap-2">
+        <h2 className="text-xs font-semibold tracking-wide uppercase opacity-60">Der Tisch</h2>
+        <div className="pizzeria-panel flex flex-wrap items-end justify-center gap-6 p-4">
+          <FaceDownStack count={state.supply.length} label="Nachziehstapel" />
+          <OvenStackView count={state.oven.length} topCard={state.oven.at(-1) ?? null} messy={preferences.messyPile} />
+        </div>
       </section>
 
-      <section className="flex flex-wrap justify-center gap-3">
-        {state.players
-          .filter((p) => p.id !== player.id)
-          .map((p) => (
-            <div
-              key={p.id}
-              className={`rounded-lg border px-3 py-2 text-xs ${PLAYER_COLOR_CLASS[p.color]} bg-opacity-30`}
-            >
-              <div className="font-semibold">
-                {playerBadge(p)}
-                {PLAYER_LABEL[p.color]} – {p.name}
+      <section className="flex flex-col gap-2">
+        <h2 className="text-xs font-semibold tracking-wide uppercase opacity-60">Die anderen Gäste</h2>
+        <div className="flex flex-wrap justify-center gap-3">
+          {state.players
+            .filter((p) => p.id !== me.id)
+            .map((p) => (
+              <div
+                key={p.id}
+                className={`rounded-lg border px-3 py-2 text-xs ${PLAYER_COLOR_CLASS[p.color]} bg-opacity-30 ${
+                  p.id === actingPlayer.id ? 'ring-2 ring-white' : ''
+                }`}
+              >
+                <div className="font-semibold">
+                  {playerBadge(p)}
+                  {PLAYER_LABEL[p.color]} – {p.name}
+                </div>
+                <div>Kellner: {p.waiter.length} · Lieferungen: {p.delivered.length}</div>
               </div>
-              <div>Kellner: {p.waiter.length} · Lieferungen: {p.delivered.length}</div>
-            </div>
-          ))}
+            ))}
+        </div>
       </section>
 
       {error && <div className="rounded bg-red-100 px-3 py-2 text-sm text-red-800">{error}</div>}
 
-      {state.phase.step === 'ingredients' && (
+      {!isMyTurn && botStep && (
+        <section className="pizzeria-panel flex flex-col items-center gap-3 p-4">
+          <h2 className="font-script text-xl text-[var(--tomato)]">
+            {playerBadge(actingPlayer)}{actingPlayer.name} spielt…
+          </h2>
+          {botStep.visual && <BotStepVisual visual={botStep.visual} />}
+          <p>{botStep.message}</p>
+          <button type="button" onClick={botStep.run} className="btn-primary px-6 py-3">
+            Weiter
+          </button>
+        </section>
+      )}
+
+      {isMyTurn && state.phase.name === 'turn' && state.phase.step === 'ingredients' && (
         <section className="flex flex-col items-center gap-3">
           <h2 className="font-script text-2xl text-[var(--tomato)]">1. Zutaten in den Ofen legen (Pflicht, alle gleich)</h2>
           {!hasIngredients ? (
@@ -118,11 +157,11 @@ export function TurnScreen({
         </section>
       )}
 
-      {state.phase.step === 'order' && (
+      {isMyTurn && state.phase.name === 'turn' && state.phase.step === 'order' && (
         <section className="flex flex-col items-center gap-3">
           <h2 className="font-script text-2xl text-[var(--tomato)]">2. Optional: eine Bestellkarte legen</h2>
           <div className="flex flex-wrap justify-center gap-2">
-            {player.handOrders.map((order) => (
+            {me.handOrders.map((order) => (
               <OrderCardView
                 key={order.id}
                 color={order.color}
@@ -152,7 +191,7 @@ export function TurnScreen({
         </section>
       )}
 
-      {state.phase.step === 'draw' && (
+      {isMyTurn && state.phase.name === 'turn' && state.phase.step === 'draw' && (
         <section className="flex flex-col items-center gap-3">
           <h2 className="font-script text-2xl text-[var(--tomato)]">3. Nachziehen auf 7 Karten (nur ein Stapel)</h2>
           <div className="flex flex-wrap justify-center gap-3">
@@ -166,31 +205,50 @@ export function TurnScreen({
             </button>
             <button
               type="button"
-              disabled={player.waiter.length === 0}
+              disabled={me.waiter.length === 0}
               onClick={() => actions.drawCards('waiter')}
               className="btn-primary px-5 py-2"
             >
-              Vom Kellner-Stapel ({player.waiter.length})
+              Vom Kellner-Stapel ({me.waiter.length})
             </button>
           </div>
         </section>
       )}
 
       <section className="flex flex-col gap-2">
-        <h2 className="text-sm font-semibold opacity-70">Meine Bestellkarte(n) – welche Zutaten du sammeln willst</h2>
-        <div className="flex flex-wrap gap-2">
-          {player.handOrders.length === 0 && <p className="text-sm opacity-50">Keine Bestellkarte auf der Hand.</p>}
-          {player.handOrders.map((order) => (
-            <OrderCardView key={order.id} color={order.color} name={order.name} requirement={order.requirement} />
-          ))}
-        </div>
-      </section>
+        <h2 className="text-xs font-semibold tracking-wide uppercase opacity-60">Mein Platz</h2>
+        <div className="pizzeria-panel flex flex-col gap-4 p-4">
+          <div className="flex flex-wrap items-end justify-center gap-6">
+            <FaceDownStack count={me.waiter.length} label="Mein Kellner-Stapel" />
+            <FaceDownStack count={me.delivered.length} label="Meine Lieferungen" />
+          </div>
 
-      <section className="flex flex-col gap-2">
-        <h2 className="text-sm font-semibold opacity-70">Zutatenkarten auf der Hand</h2>
-        <div className="flex flex-wrap gap-2">
-          {player.hand.map((c) =>
-            c.kind === 'ingredient' ? <IngredientCardView key={c.id} ingredient={c.ingredient} /> : null,
+          {myStep !== 'order' && (
+            <div>
+              <h3 className="mb-1 text-sm font-semibold opacity-70">Meine Bestellkarte(n)</h3>
+              <div className="flex flex-wrap justify-center gap-2">
+                {me.handOrders.length === 0 && <p className="text-sm opacity-50">Keine Bestellkarte auf der Hand.</p>}
+                {me.handOrders.map((order) => (
+                  <OrderCardView key={order.id} color={order.color} name={order.name} requirement={order.requirement} />
+                ))}
+              </div>
+            </div>
+          )}
+
+          {myStep !== 'ingredients' && (
+            <div>
+              <h3 className="mb-1 text-sm font-semibold opacity-70">Meine Handkarten</h3>
+              {/* Slight overlap so the hand reads like cards actually held in hand, not a grid. */}
+              <div className="flex flex-wrap justify-center">
+                {me.hand.map((c, i) =>
+                  c.kind === 'ingredient' ? (
+                    <div key={c.id} className={i > 0 ? '-ml-4' : ''}>
+                      <IngredientCardView ingredient={c.ingredient} />
+                    </div>
+                  ) : null,
+                )}
+              </div>
+            </div>
           )}
         </div>
       </section>

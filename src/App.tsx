@@ -28,11 +28,14 @@ function App() {
     );
   }
 
-  // Whenever it's a bot's turn to act, show what it would do and require a
-  // manual "Weiter" click before applying it — so bot moves are visible
-  // step by step instead of happening invisibly.
-  if (botStep) {
-    return <BotTurnScreen step={botStep} />;
+  // The persistent table view covers your own turn AND a bot's turn
+  // starting up (passDevice landing on a bot) — your hand/stacks stay on
+  // screen the whole time, with the bot's move shown as a banner at the
+  // table instead of a full-screen swap. Bot decisions during round-end
+  // scoring (joker/minimale/top-up) don't have a hand view to fold into, so
+  // those still use the full-screen BotTurnScreen.
+  if (state.phase.name === 'turn' || (state.phase.name === 'passDevice' && botStep)) {
+    return <TurnScreen state={state} actions={actions} error={error} preferences={preferences} botStep={botStep} />;
   }
 
   switch (state.phase.name) {
@@ -43,9 +46,8 @@ function App() {
           onReady={actions.confirmPassDevice}
         />
       );
-    case 'turn':
-      return <TurnScreen state={state} actions={actions} error={error} preferences={preferences} />;
     case 'roundEnd':
+      if (botStep) return <BotTurnScreen step={botStep} />;
       return <RoundEndScreen state={state} actions={actions} error={error} />;
     case 'gameEnd':
       return (
@@ -54,6 +56,8 @@ function App() {
           onRestart={() => start(state.players.map((p) => ({ name: p.name, isBot: p.isBot, learns: p.learns })))}
         />
       );
+    default:
+      return null;
   }
 }
 

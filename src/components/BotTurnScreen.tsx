@@ -2,7 +2,8 @@ import { PLAYER_COLOR_CLASS, playerBadge } from '../game/colors';
 import type { BotStep } from '../game/useGame';
 import { FaceDownStack, IngredientCardView, OrderCardView } from './Card';
 
-function BotStepVisual({ visual }: { visual: NonNullable<BotStep['visual']> }) {
+/** Shared by BotTurnScreen (round-end bot decisions, full takeover) and TurnScreen's inline banner (turn-phase bot moves, shown at the table). */
+export function BotStepVisual({ visual }: { visual: NonNullable<BotStep['visual']> }) {
   switch (visual.kind) {
     case 'ingredient':
       return (
@@ -19,6 +20,7 @@ function BotStepVisual({ visual }: { visual: NonNullable<BotStep['visual']> }) {
   }
 }
 
+/** Full-screen takeover, only used now for round-end bot decisions (joker/minimale/top-up) — those don't have a persistent hand view to fold into. */
 export function BotTurnScreen({ step }: { step: BotStep }) {
   return (
     <div className="mx-auto flex max-w-md flex-col items-center gap-6 p-8 text-center">
