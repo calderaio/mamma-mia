@@ -45,12 +45,18 @@ export function OrderCardView({
   requirement,
   selected,
   onClick,
+  struck,
+  note,
 }: {
   color: PlayerColor;
   name: string;
   requirement: OrderRequirement;
   selected?: boolean;
   onClick?: () => void;
+  /** Render as already delivered: dimmed with the name struck through. */
+  struck?: boolean;
+  /** Replaces the player-colour label in the card footer (e.g. a status line). */
+  note?: string;
 }) {
   return (
     <button
@@ -58,11 +64,11 @@ export function OrderCardView({
       onClick={onClick}
       className={`flex w-40 shrink-0 flex-col gap-1 rounded-lg border-2 p-2 text-left text-xs shadow transition-transform ${PLAYER_COLOR_CLASS[color]} ${
         selected ? '-translate-y-2 ring-4 ring-white' : ''
-      } ${onClick ? 'cursor-pointer hover:-translate-y-1' : 'cursor-default'}`}
+      } ${struck ? 'opacity-55' : ''} ${onClick ? 'cursor-pointer hover:-translate-y-1' : 'cursor-default'}`}
     >
-      <div className="font-bold">{name}</div>
+      <div className={`font-bold ${struck ? 'line-through' : ''}`}>{name}</div>
       <div className="opacity-90">{describeRequirement(requirement)}</div>
-      <div className="mt-1 text-[10px] uppercase tracking-wide opacity-75">{PLAYER_LABEL[color]}</div>
+      <div className="mt-1 text-[10px] uppercase tracking-wide opacity-75">{note ?? PLAYER_LABEL[color]}</div>
     </button>
   );
 }

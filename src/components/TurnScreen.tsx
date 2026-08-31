@@ -6,6 +6,7 @@ import type { BotStep } from '../game/useGame';
 import { PLAYER_COLOR_CLASS, PLAYER_LABEL, playerBadge } from '../game/colors';
 import { FaceDownStack, IngredientCardView, OrderCardView, OvenStackView } from './Card';
 import { BotStepVisual } from './BotTurnScreen';
+import { RecipeChecklist } from './RecipeChecklist';
 
 interface Actions {
   placeIngredients: (cardIds: CardId[]) => void;
@@ -220,7 +221,25 @@ export function TurnScreen({
         <div className="pizzeria-panel flex flex-col gap-4 p-4">
           <div className="flex flex-wrap items-end justify-center gap-6">
             <FaceDownStack count={me.waiter.length} label="Mein Kellner-Stapel" />
-            <FaceDownStack count={me.delivered.length} label="Meine Lieferungen" />
+          </div>
+
+          <div>
+            <h3 className="mb-1 text-sm font-semibold opacity-70">Meine gelieferten Pizzen ({me.delivered.length})</h3>
+            {me.delivered.length === 0 ? (
+              <p className="text-center text-sm opacity-50">Noch keine Pizza geliefert.</p>
+            ) : (
+              <div className="flex flex-wrap justify-center gap-2">
+                {me.delivered.map((order) => (
+                  <OrderCardView
+                    key={order.id}
+                    color={order.color}
+                    name={order.name}
+                    requirement={order.requirement}
+                    note="✓ geliefert"
+                  />
+                ))}
+              </div>
+            )}
           </div>
 
           {myStep !== 'order' && (
@@ -250,6 +269,8 @@ export function TurnScreen({
               </div>
             </div>
           )}
+
+          <RecipeChecklist player={me} oven={state.oven} />
         </div>
       </section>
 

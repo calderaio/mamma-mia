@@ -5,6 +5,7 @@ import { INGREDIENTS, INGREDIENT_LABEL } from '../game/ingredients';
 import { PERSONAL_INGREDIENT, playerBadge } from '../game/colors';
 import { IngredientCardView, OrderCardView } from './Card';
 import { LogPanel } from './TurnScreen';
+import { RecipeChecklist } from './RecipeChecklist';
 
 interface Actions {
   revealNext: () => void;
@@ -212,6 +213,12 @@ export function RoundEndScreen({ state, actions, error }: { state: GameState; ac
       )}
 
       {me && <MyHandStrip player={me} />}
+      {me && (
+        <RecipeChecklist
+          player={me}
+          oven={[...roundEnd.queue, ...(pending ? [pending.order] : [])]}
+        />
+      )}
 
       <LogPanel state={state} />
     </div>
