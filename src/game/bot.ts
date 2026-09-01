@@ -147,6 +147,37 @@ function orderDeliverable(
   return (Object.entries(required) as [Ingredient, number][]).every(([i, n]) => tally[i] + backup(i) >= n);
 }
 
+/**
+ * Ingredient cards the bot should keep in hand rather than shed: for each of
+ * its own orders that could still need a round-end hand top-up — held OR
+ * already sitting in the oven (public, face-up) — the amount by which the
+ * order out-runs the current oven tally, capped at what the hand actually
+ * holds. Bombastica is excluded (no top-up allowed).
+ */
+function reservedForTopUp(
+  state: GameState,
+  player: Player,
+  personal: Ingredient,
+  tally: IngredientCounts,
+  hand: IngredientCounts,
+): IngredientCounts {
+  const reserve = zeroIngredientRecord();
+  const ownOrders: OrderCard[] = [
+    ...state.oven.filter((c): c is OrderCard => c.kind === 'order' && c.color === player.color),
+    ...player.handOrders,
+  ];
+  for (const order of ownOrders) {
+    if (order.requirement.kind === 'bombastica') continue;
+    const required = concreteRequirement(order, personal, tally, hand);
+    if (!required) continue;
+    for (const [ingredient, count] of Object.entries(required) as [Ingredient, number][]) {
+      const gap = Math.max(0, count - tally[ingredient]);
+      reserve[ingredient] = Math.min(hand[ingredient], reserve[ingredient] + gap);
+    }
+  }
+  return reserve;
+}
+
 /** How many ingredient slots the order is still missing from the oven alone. */
 function shortfallTotal(order: OrderCard, personal: Ingredient, tally: IngredientCounts): number {
   if (order.requirement.kind === 'bombastica') return Math.max(0, 15 - tallyTotal(tally));
@@ -192,6 +223,7 @@ export function chooseIngredientsToPlay(state: GameState, player: Player): CardI
 
   const personal = botPersonalIngredient(player);
   const tally = state.ovenIngredientTally;
+  const hand = botIngredientHandCounts(player);
   const byKind = groupByKind(cards);
 
   const largestGroup = (): IngredientCard[] =>
@@ -210,7 +242,8 @@ export function chooseIngredientsToPlay(state: GameState, player: Player): CardI
     if (contribution.length > 0) return contribution.map((c) => c.id);
   }
 
-  return [minimalSpareCard(byKind, personal).id];
+  const reserved = reservedForTopUp(state, player, personal, tally, hand);
+  return [minimalSpareCard(byKind, personal, reserved).id];
 }
 
 /** Cards from hand that make the most progress toward `order` this turn (one kind only, capped at the remaining need). */
@@ -238,12 +271,27 @@ function ingredientsTowardOrder(
   return (byKind.get(bestKind) ?? []).slice(0, bestPlay);
 }
 
-/** A single card to shed when nothing needs building: from the smallest set, preferring not to break into the personal ingredient. */
-function minimalSpareCard(byKind: Map<Ingredient, IngredientCard[]>, personal: Ingredient): IngredientCard {
+/**
+ * A single card to shed when nothing needs building. Prefers a kind with a
+ * genuine surplus (more in hand than reserved for a round-end top-up), then
+ * the smallest set, then not the personal ingredient. Falls back to shedding
+ * a reserved card only if every kind is spoken for.
+ */
+function minimalSpareCard(
+  byKind: Map<Ingredient, IngredientCard[]>,
+  personal: Ingredient,
+  reserved: IngredientCounts,
+): IngredientCard {
   const groups = [...byKind.entries()].filter(([, cards]) => cards.length > 0);
+  const rank = ([kind, cards]: [Ingredient, IngredientCard[]]): [number, number, number] => [
+    cards.length > reserved[kind] ? 0 : 1,
+    cards.length,
+    kind === personal ? 1 : 0,
+  ];
   groups.sort((a, b) => {
-    if (a[1].length !== b[1].length) return a[1].length - b[1].length;
-    return (a[0] === personal ? 1 : 0) - (b[0] === personal ? 1 : 0);
+    const ra = rank(a);
+    const rb = rank(b);
+    return ra[0] - rb[0] || ra[1] - rb[1] || ra[2] - rb[2];
   });
   return groups[0][1][0];
 }
@@ -274,11 +322,15 @@ export function choosePlaceOrder(state: GameState, player: Player): CardId | nul
   const safe = player.handOrders.filter((o) => orderDeliverable(o, personal, tally, hand, false));
   if (safe.length > 0) return heaviest(safe).id;
 
+  // Commit an order the hand can still finish at the reveal once the oven
+  // already covers most of it (or the round is about to end) — grabbing an
+  // early slot in the reveal order is worth the held-back top-up cards,
+  // which reservedForTopUp() then protects from being shed.
   const withTopUp = player.handOrders.filter(
     (o) =>
       o.requirement.kind !== 'bombastica' &&
       orderDeliverable(o, personal, tally, hand, true) &&
-      (supplyLow || shortfallTotal(o, personal, tally) <= 1),
+      (supplyLow || shortfallTotal(o, personal, tally) <= 2),
   );
   if (withTopUp.length > 0) return heaviest(withTopUp).id;
 
@@ -297,15 +349,26 @@ export function chooseDrawSource(state: GameState, player: Player): 'supply' | '
   }
   if (player.waiter.length === 0) return 'supply';
 
+  const personal = botPersonalIngredient(player);
+  const tally = state.ovenIngredientTally;
+  const hand = botIngredientHandCounts(player);
+  const holdsCloseOrder = player.handOrders.some(
+    (o) => orderDeliverable(o, personal, tally, hand, true) || shortfallTotal(o, personal, tally) <= 2,
+  );
+
+  // Keep a small menu of orders in hand so there's usually one that matches
+  // the publicly known oven — above all the leftover pile at a round's
+  // start. Only while the draw pile is comfortable and nothing held is close.
+  if (player.handOrders.length < 2 && !holdsCloseOrder && state.supply.length > state.players.length * 4) {
+    return 'waiter';
+  }
+
   const needed = Math.max(0, 7 - (player.hand.length + player.handOrders.length));
   const supplyDrawEndsRound = state.supply.length > 0 && state.supply.length <= needed;
   if (!supplyDrawEndsRound) return 'supply';
 
   // This supply draw would empty the pile and end the round — hold it off by
-  // drawing orders instead if we still have one we could finish next turn.
-  const personal = botPersonalIngredient(player);
-  const tally = state.ovenIngredientTally;
-  const hand = botIngredientHandCounts(player);
+  // drawing orders instead if we still hold one we could finish at the reveal.
   const unplacedButFinishable = player.handOrders.some(
     (o) =>
       o.requirement.kind !== 'bombastica' &&

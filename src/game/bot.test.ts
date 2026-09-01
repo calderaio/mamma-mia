@@ -37,14 +37,15 @@ interface StateOverrides {
   tally?: Partial<Record<Ingredient, number>>;
   supply?: number;
   playerCount?: number;
+  oven?: GameState['oven'];
 }
 
-function makeState({ tally = {}, supply = 40, playerCount = 3 }: StateOverrides = {}): GameState {
+function makeState({ tally = {}, supply = 40, playerCount = 3, oven = [] }: StateOverrides = {}): GameState {
   return {
     players: Array.from({ length: playerCount }, (_, i) => makePlayer({ id: `p${i}` })),
     currentPlayerIndex: 0,
     supply: Array.from({ length: supply }, () => makeIngredientCard('salami')),
-    oven: [],
+    oven,
     round: 1,
     maxRounds: 3,
     phase: { name: 'turn', step: 'order' },
@@ -105,6 +106,16 @@ describe('chooseIngredientsToPlay', () => {
     const ids = chooseIngredientsToPlay(makeState({ tally: { mushroom: 8 } }), player);
     expect(kindsOf(ids, player)).toEqual(['salami', 'salami', 'salami', 'salami']);
   });
+
+  it('reserves cards an already-committed order still needs, shedding a bigger unrelated set instead', () => {
+    const committed = order({ kind: 'normal', requirements: { pepper: 1, olive: 4 } }, 'Committed');
+    const player = makePlayer({ hand: hand({ salami: 3, olive: 1 }) });
+    // committed order sits in the oven with pepper + 3 olive → 1 olive owed
+    // from hand at the reveal. The bot has nothing to build, so it sheds a
+    // salami and keeps its last olive.
+    const ids = chooseIngredientsToPlay(makeState({ tally: { pepper: 1, olive: 3 }, oven: [committed] }), player);
+    expect(kindsOf(ids, player)).toEqual(['salami']);
+  });
 });
 
 describe('choosePlaceOrder', () => {
@@ -135,14 +146,17 @@ describe('choosePlaceOrder', () => {
     expect(choosePlaceOrder(makeState({ tally: { pepper: 1, olive: 3 } }), player)).not.toBeNull();
   });
 
-  it('places an order it can only finish with a hand top-up once the supply is nearly gone', () => {
+  it('commits a top-up order once the oven covers most of it, but not while it is barely started', () => {
     const player = makePlayer({
-      hand: hand({ salami: 2 }),
+      hand: hand({ salami: 3, pepper: 1 }),
       handOrders: [order({ kind: 'normal', requirements: { pepper: 1, salami: 4 } })],
     });
-    const tally = { pepper: 1, salami: 2 };
-    expect(choosePlaceOrder(makeState({ tally, supply: 40 }), player)).toBeNull();
-    expect(choosePlaceOrder(makeState({ tally, supply: 4 }), player)).not.toBeNull();
+    // oven has 3 of the 4 salami (shortfall 2) → commit now for an early reveal slot
+    expect(choosePlaceOrder(makeState({ tally: { pepper: 1, salami: 2 }, supply: 40 }), player)).not.toBeNull();
+    // oven barely started (shortfall 4) → wait for it to fill…
+    expect(choosePlaceOrder(makeState({ tally: { salami: 1 }, supply: 40 }), player)).toBeNull();
+    // …unless the draw pile is nearly gone
+    expect(choosePlaceOrder(makeState({ tally: { salami: 1 }, supply: 4 }), player)).not.toBeNull();
   });
 
   it('prefers the heavier of two currently-satisfiable orders', () => {
@@ -198,6 +212,23 @@ describe('chooseDrawSource', () => {
     });
     const state = makeState({ tally: { pepper: 1, salami: 2 }, supply: 2 });
     expect(chooseDrawSource(state, player)).toBe('supply');
+  });
+
+  it('draws a second order from the waiter when its one held order is far from done', () => {
+    const player = makePlayer({
+      handOrders: [order({ kind: 'normal', requirements: { pepper: 1, salami: 4 } })],
+      waiter: [order({ kind: 'bombastica' })],
+    });
+    expect(chooseDrawSource(makeState({ supply: 40 }), player)).toBe('waiter');
+  });
+
+  it('takes ingredients instead of a second order when the held one is close', () => {
+    const player = makePlayer({
+      hand: hand({ salami: 4, pepper: 1 }),
+      handOrders: [order({ kind: 'normal', requirements: { pepper: 1, salami: 4 } })],
+      waiter: [order({ kind: 'bombastica' })],
+    });
+    expect(chooseDrawSource(makeState({ tally: { salami: 2 }, supply: 40 }), player)).toBe('supply');
   });
 });
 
